@@ -1,0 +1,19 @@
+{
+  "name": "vmprint-contexts",
+  "description": "Standard rendering contexts for the VMPrint layout engine.",
+  "author": "cosmiciron",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vmprint/vmprint-contexts.git"
+  },
+  "workspaces": [
+    "canvas",
+    "pdf",
+    "pdf-lite"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "clean": "npm run clean --workspaces"
+  }
+}
