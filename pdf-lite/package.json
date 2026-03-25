@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/vmprint/vmprint-contexts.git",
+    "url": "git+https://github.com/cosmiciron/vmprint-contexts.git",
     "directory": "pdf-lite"
   },
   "main": "dist/index.js",

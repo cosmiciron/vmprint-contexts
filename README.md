@@ -1,6 +1,6 @@
 # VMPrint Contexts
 
-Standard rendering contexts for the [VMPrint](https://github.com/vmprint/vmprint) layout engine.
+Standard rendering contexts for the [VMPrint](https://github.com/cosmiciron/vmprint) layout engine.
 
 Rendering contexts are the output surface for VMPrint. The engine produces a `Page[]` — a stream of absolute layout data — and a context is what those pages are painted onto. This architecture ensures that the same document can be rendered to PDF, SVG, or an HTML Canvas with identical typesetting.
 
