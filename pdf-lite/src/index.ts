@@ -1,4 +1,6 @@
 import { jsPDF } from 'jspdf';
+import * as fontkit from 'fontkit';
+import { Buffer } from 'buffer';
 import {
     Context,
     ContextFactoryOptions,
@@ -9,7 +11,6 @@ import {
     VmprintOutputStream,
     ContextPageSize,
 } from '@vmprint/contracts';
-import { Buffer } from 'buffer';
 
 // ---------------------------------------------------------------------------
 // Standard-font PostScript name → jsPDF {family, fontStyle}
@@ -18,20 +19,20 @@ import { Buffer } from 'buffer';
 type JsPdfFontInfo = { family: string; fontStyle: string };
 
 const POSTSCRIPT_TO_JSPDF: Record<string, JsPdfFontInfo> = {
-    'Helvetica':             { family: 'helvetica',    fontStyle: 'normal'     },
-    'Helvetica-Bold':        { family: 'helvetica',    fontStyle: 'bold'       },
-    'Helvetica-Oblique':     { family: 'helvetica',    fontStyle: 'italic'     },
-    'Helvetica-BoldOblique': { family: 'helvetica',    fontStyle: 'bolditalic' },
-    'Times-Roman':           { family: 'times',        fontStyle: 'normal'     },
-    'Times-Bold':            { family: 'times',        fontStyle: 'bold'       },
-    'Times-Italic':          { family: 'times',        fontStyle: 'italic'     },
-    'Times-BoldItalic':      { family: 'times',        fontStyle: 'bolditalic' },
-    'Courier':               { family: 'courier',      fontStyle: 'normal'     },
-    'Courier-Bold':          { family: 'courier',      fontStyle: 'bold'       },
-    'Courier-Oblique':       { family: 'courier',      fontStyle: 'italic'     },
-    'Courier-BoldOblique':   { family: 'courier',      fontStyle: 'bolditalic' },
-    'Symbol':                { family: 'symbol',       fontStyle: 'normal'     },
-    'ZapfDingbats':          { family: 'zapfdingbats', fontStyle: 'normal'     },
+    'Helvetica': { family: 'helvetica', fontStyle: 'normal' },
+    'Helvetica-Bold': { family: 'helvetica', fontStyle: 'bold' },
+    'Helvetica-Oblique': { family: 'helvetica', fontStyle: 'italic' },
+    'Helvetica-BoldOblique': { family: 'helvetica', fontStyle: 'bolditalic' },
+    'Times-Roman': { family: 'times', fontStyle: 'normal' },
+    'Times-Bold': { family: 'times', fontStyle: 'bold' },
+    'Times-Italic': { family: 'times', fontStyle: 'italic' },
+    'Times-BoldItalic': { family: 'times', fontStyle: 'bolditalic' },
+    'Courier': { family: 'courier', fontStyle: 'normal' },
+    'Courier-Bold': { family: 'courier', fontStyle: 'bold' },
+    'Courier-Oblique': { family: 'courier', fontStyle: 'italic' },
+    'Courier-BoldOblique': { family: 'courier', fontStyle: 'bolditalic' },
+    'Symbol': { family: 'symbol', fontStyle: 'normal' },
+    'ZapfDingbats': { family: 'zapfdingbats', fontStyle: 'normal' },
 };
 
 const WIN_ANSI_UNICODE_TO_BYTE: Readonly<Record<number, number>> = {
@@ -240,9 +241,9 @@ function parseColor(color: string): [number, number, number] {
 
 function mimeToImageFormat(mimeType?: string): string {
     const m = (mimeType ?? '').toLowerCase();
-    if (m.includes('png'))  return 'PNG';
-    if (m.includes('gif'))  return 'GIF';
-    if (m.includes('bmp'))  return 'BMP';
+    if (m.includes('png')) return 'PNG';
+    if (m.includes('gif')) return 'GIF';
+    if (m.includes('bmp')) return 'BMP';
     if (m.includes('webp')) return 'WEBP';
     return 'JPEG';
 }
@@ -259,8 +260,9 @@ function shapedGlyphsToText(glyphs: ContextShapedGlyph[]): string {
     return chars.join('');
 }
 
-function hasArabicScript(text: string): boolean {
-    return /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text);
+function isRtlScript(text: string): boolean {
+    // Basic check for Arabic, Hebrew, and other RTL ranges.
+    return /[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text);
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +308,7 @@ export class PdfLiteContext implements Context {
     /** Maps engine font-id → jsPDF {family, fontStyle}. */
     private readonly fontInfoById = new Map<string, JsPdfFontInfo>();
     private readonly standardPostscriptNameById = new Map<string, string>();
+    private readonly fontkitFonts = new Map<string, any>();
 
     private pagesAdded = 0;
     private outputStream: VmprintOutputStream | null = null;
@@ -314,14 +317,14 @@ export class PdfLiteContext implements Context {
     constructor(options: ContextFactoryOptions) {
         const format = resolvePageFormat(options.size);
         this.doc = new jsPDF({
-            unit:             'pt',
-            format:           format as any,
-            orientation:      resolveOrientation(options.size),
-            compress:         true,
+            unit: 'pt',
+            format: format as any,
+            orientation: resolveOrientation(options.size),
+            compress: true,
             putOnlyUsedFonts: true,
         });
         const ps = this.doc.internal.pageSize;
-        this.pageWidth  = typeof ps.getWidth  === 'function' ? ps.getWidth()  : (ps as any).width;
+        this.pageWidth = typeof ps.getWidth === 'function' ? ps.getWidth() : (ps as any).width;
         this.pageHeight = typeof ps.getHeight === 'function' ? ps.getHeight() : (ps as any).height;
     }
 
@@ -378,11 +381,16 @@ export class PdfLiteContext implements Context {
         // it collects used glyph IDs via pdfEscape16 and encodes only those glyphs
         // at output time via font.metadata.subset.encode(glyIdsUsed).
         try {
-            const base64   = Buffer.from(buffer).toString('base64');
+            const fontBuffer = Buffer.from(buffer);
+            const base64 = fontBuffer.toString('base64');
             const filename = `${id}.ttf`;
             this.doc.addFileToVFS(filename, base64);
             this.doc.addFont(filename, id, 'normal', 400, 'Identity-H');
             this.fontInfoById.set(id, { family: id, fontStyle: 'normal' });
+
+            // Store fontkit object for path drawing (SVG approach for bidi/shaped text).
+            const fkFont = fontkit.create(fontBuffer);
+            this.fontkitFonts.set(id, fkFont);
         } catch (e: unknown) {
             throw new Error(`[PdfLiteContext] Failed to register font "${id}": ${String(e)}`);
         }
@@ -467,8 +475,8 @@ export class PdfLiteContext implements Context {
         const rad = (angle * Math.PI) / 180;
         const cos = Math.cos(rad);
         const sin = Math.sin(rad);
-        const ox  = originX ?? 0;
-        const oy  = originY ?? 0;
+        const ox = originX ?? 0;
+        const oy = originY ?? 0;
         // Rotation matrix in y-down user space (matches PDFKit's convention).
         this.applyTransform(
             cos, sin, -sin, cos,
@@ -537,17 +545,22 @@ export class PdfLiteContext implements Context {
     bezierCurveTo(
         cp1x: number, cp1y: number,
         cp2x: number, cp2y: number,
-        x: number,    y: number
+        x: number, y: number
     ): this {
         this.doc.curveTo(cp1x, cp1y, cp2x, cp2y, x, y);
         return this;
     }
 
+    circle(x: number, y: number, r: number): this {
+        this.doc.circle(x, y, r, null);
+        return this;
+    }
+
     rect(x: number, y: number, w: number, h: number): this {
-        this.doc.moveTo(x,     y    );
-        this.doc.lineTo(x + w, y    );
+        this.doc.moveTo(x, y);
+        this.doc.lineTo(x + w, y);
         this.doc.lineTo(x + w, y + h);
-        this.doc.lineTo(x,     y + h);
+        this.doc.lineTo(x, y + h);
         (this.doc as any).close();
         return this;
     }
@@ -557,16 +570,26 @@ export class PdfLiteContext implements Context {
 
     roundedRect(x: number, y: number, w: number, h: number, r: number): this {
         const k = PdfLiteContext.K * r;
-        this.doc.moveTo(x + r,         y            );
-        this.doc.lineTo(x + w - r,     y            );
-        this.doc.curveTo(x + w - r + k, y,           x + w, y + r - k,     x + w, y + r    );
-        this.doc.lineTo(x + w,         y + h - r    );
-        this.doc.curveTo(x + w,        y + h - r + k, x + w - r + k, y + h, x + w - r, y + h);
-        this.doc.lineTo(x + r,         y + h        );
-        this.doc.curveTo(x + r - k,    y + h,         x, y + h - r + k,    x, y + h - r   );
-        this.doc.lineTo(x,             y + r        );
-        this.doc.curveTo(x,            y + r - k,     x + r - k, y,         x + r, y       );
+        this.doc.moveTo(x + r, y);
+        this.doc.lineTo(x + w - r, y);
+        this.doc.curveTo(x + w - r + k, y, x + w, y + r - k, x + w, y + r);
+        this.doc.lineTo(x + w, y + h - r);
+        this.doc.curveTo(x + w, y + h - r + k, x + w - r + k, y + h, x + w - r, y + h);
+        this.doc.lineTo(x + r, y + h);
+        this.doc.curveTo(x + r - k, y + h, x, y + h - r + k, x, y + h - r);
+        this.doc.lineTo(x, y + r);
+        this.doc.curveTo(x, y + r - k, x + r - k, y, x + r, y);
         (this.doc as any).close();
+        return this;
+    }
+
+    clip(rule?: 'nonzero' | 'evenodd'): this {
+        if (rule === 'evenodd') {
+            this.doc.clipEvenOdd();
+        } else {
+            this.doc.clip();
+        }
+        this.doc.discardPath();
         return this;
     }
 
@@ -645,16 +668,26 @@ export class PdfLiteContext implements Context {
     ): this {
         if (!glyphs || glyphs.length === 0) return this;
 
-        // jsPDF cannot emit pre-shaped fontkit glyph IDs directly. Rebuild a Unicode
-        // string from code points, then use jsPDF's Arabic/RTL processing as fallback.
+        // Implementation choice: for simple text (like Latin), we still want to use
+        // PDF text operators where possible (lite and searchable). However, for
+        // bidi/RTL text where per-glyph positioning is critical, we use the "SVG approach":
+        // drawing glyph paths directly into the PDF. This mirrors the canvas context behavior.
+        const fkFont = this.fontkitFonts.get(fontId);
         const reconstructedText = shapedGlyphsToText(glyphs);
+        const containsBidi = isRtlScript(reconstructedText); // Or check for other RTL scripts
+
+        if (fkFont && containsBidi) {
+            return this.drawShapedGlyphsAsPaths(fontId, fontSize, color, x, y, ascent, glyphs);
+        }
+
+        // Fallback or lightweight mode: Rebuild a Unicode string and let jsPDF handle it.
         if (!reconstructedText) return this;
 
         this.font(fontId, fontSize);
         this.fillColor(color);
 
         const docAny = this.doc as any;
-        const arabic = hasArabicScript(reconstructedText);
+        const arabic = containsBidi;
         const previousR2L = typeof docAny.getR2L === 'function' ? docAny.getR2L() : undefined;
 
         let text = reconstructedText;
@@ -684,20 +717,122 @@ export class PdfLiteContext implements Context {
         return this;
     }
 
+    private drawShapedGlyphsAsPaths(
+        fontId: string,
+        fontSize: number,
+        color: string,
+        x: number,
+        y: number,
+        ascent: number,
+        glyphs: ContextShapedGlyph[]
+    ): this {
+        const fkFont = this.fontkitFonts.get(fontId);
+        if (!fkFont) return this;
+
+        this.fillColor(color);
+
+        const upm = fkFont.unitsPerEm || 1000;
+        const scale = fontSize / upm;
+        const baselineY = y + (ascent / 1000) * fontSize;
+        const docAny = this.doc as any;
+        const write = typeof docAny.internal?.write === 'function'
+            ? (segment: string) => docAny.internal.write(segment)
+            : null;
+        if (!write) return this;
+
+        const format = (value: number): string => Number(value.toFixed(6)).toString();
+        const mapPoint = (px: number, py: number, tx: number, ty: number): [number, number] => {
+            const userX = tx + scale * px;
+            const userY = ty - scale * py;
+            return [userX, this.pageHeight - userY];
+        };
+
+        let penX = 0;
+        for (const sg of glyphs) {
+            const glyph = fkFont.getGlyph(sg.id);
+            if (glyph?.path) {
+                const tx = x + penX + (sg.xOffset || 0);
+                const ty = baselineY - (sg.yOffset || 0);
+
+                let curX = 0;
+                let curY = 0;
+                for (const cmd of glyph.path.commands) {
+                    const name = (cmd as any).command ?? (cmd as any).type;
+                    const args = (cmd as any).args ?? [];
+                    switch (name) {
+                        case 'moveTo':
+                        case 'M': {
+                            const [px, py] = args.length ? args : [(cmd as any).x, (cmd as any).y];
+                            const [mx, my] = mapPoint(px, py, tx, ty);
+                            write(`${format(mx)} ${format(my)} m`);
+                            curX = px; curY = py;
+                            break;
+                        }
+                        case 'lineTo':
+                        case 'L': {
+                            const [px, py] = args.length ? args : [(cmd as any).x, (cmd as any).y];
+                            const [lx, ly] = mapPoint(px, py, tx, ty);
+                            write(`${format(lx)} ${format(ly)} l`);
+                            curX = px; curY = py;
+                            break;
+                        }
+                        case 'quadraticCurveTo':
+                        case 'Q': {
+                            const [qcx, qcy, px, py] = args.length
+                                ? args
+                                : [(cmd as any).cp1x, (cmd as any).cp1y, (cmd as any).x, (cmd as any).y];
+                            // Quadratic to cubic Bezier conversion for jsPDF.
+                            const cp1x = curX + (2 / 3) * (qcx - curX);
+                            const cp1y = curY + (2 / 3) * (qcy - curY);
+                            const cp2x = px + (2 / 3) * (qcx - px);
+                            const cp2y = py + (2 / 3) * (qcy - py);
+                            const [c1x, c1y] = mapPoint(cp1x, cp1y, tx, ty);
+                            const [c2x, c2y] = mapPoint(cp2x, cp2y, tx, ty);
+                            const [ex, ey] = mapPoint(px, py, tx, ty);
+                            write(`${format(c1x)} ${format(c1y)} ${format(c2x)} ${format(c2y)} ${format(ex)} ${format(ey)} c`);
+                            curX = px; curY = py;
+                            break;
+                        }
+                        case 'bezierCurveTo':
+                        case 'C': {
+                            const [cp1x, cp1y, cp2x, cp2y, px, py] = args.length
+                                ? args
+                                : [(cmd as any).cp1x, (cmd as any).cp1y, (cmd as any).cp2x, (cmd as any).cp2y, (cmd as any).x, (cmd as any).y];
+                            const [c1x, c1y] = mapPoint(cp1x, cp1y, tx, ty);
+                            const [c2x, c2y] = mapPoint(cp2x, cp2y, tx, ty);
+                            const [ex, ey] = mapPoint(px, py, tx, ty);
+                            write(`${format(c1x)} ${format(c1y)} ${format(c2x)} ${format(c2y)} ${format(ex)} ${format(ey)} c`);
+                            curX = px; curY = py;
+                            break;
+                        }
+                        case 'closePath':
+                        case 'Z':
+                            write('h');
+                            break;
+                    }
+                }
+                write('f');
+            }
+            penX += sg.xAdvance || 0;
+        }
+
+        return this;
+    }
+
     // -------------------------------------------------------------------------
     // Images
     // -------------------------------------------------------------------------
 
     image(source: string | Uint8Array, x: number, y: number, options?: ContextImageOptions): this {
         const format = mimeToImageFormat(options?.mimeType);
-        const w = options?.width  ?? 0;
+        const w = options?.width ?? 0;
         const h = options?.height ?? 0;
         try {
             if (typeof source === 'string') {
                 this.doc.addImage(source, format, x, y, w, h);
             } else {
-                const base64   = Buffer.from(source).toString('base64');
-                const dataUrl  = `data:${options?.mimeType ?? 'image/jpeg'};base64,${base64}`;
+                const base64 = Buffer.from(source).toString('base64');
+                const dataUrl = `data:${options?.mimeType ?? 'image/jpeg'};base64,${base64}`;
                 this.doc.addImage(dataUrl, format, x, y, w, h);
             }
         } catch {

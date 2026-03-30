@@ -1,6 +1,6 @@
 {
   "name": "@vmprint/context-canvas",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Canvas-oriented browser display context for VMPrint, backed internally by SVG page scenes.",
   "author": "cosmiciron",
   "license": "Apache-2.0",
@@ -27,7 +27,7 @@
     "clean": "rimraf dist"
   },
   "dependencies": {
-    "@vmprint/contracts": "^1.0.0",
+    "@vmprint/contracts": "^1.0.2",
     "buffer": "^6.0.3",
     "fontkit": "^2.0.4"
   },

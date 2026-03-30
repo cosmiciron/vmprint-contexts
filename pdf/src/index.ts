@@ -152,6 +152,11 @@ export class PdfContext implements Context {
         return this;
     }
 
+    circle(x: number, y: number, r: number): this {
+        this.doc.circle(x, y, r);
+        return this;
+    }
+
     rect(x: number, y: number, w: number, h: number): this {
         this.doc.rect(x, y, w, h);
         return this;
@@ -159,6 +164,11 @@ export class PdfContext implements Context {
 
     roundedRect(x: number, y: number, w: number, h: number, r: number): this {
         this.doc.roundedRect(x, y, w, h, r);
+        return this;
+    }
+
+    clip(rule?: 'nonzero' | 'evenodd'): this {
+        this.doc.clip(rule);
         return this;
     }
 

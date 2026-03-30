@@ -25,6 +25,7 @@ type GraphicsState = {
     lineWidth: number;
     opacity: number;
     dash: { length: number; space: number } | null;
+    clipPathId: string | null;
     matrix: Matrix;
 };
 
@@ -54,6 +55,7 @@ type TextRenderMode = 'text' | 'glyph-path';
 
 type PageScene = {
     nodes: string[];
+    defs: string[];
     usedFontIds: Set<string>;
 };
 
@@ -85,6 +87,9 @@ const pathCommandsToSvg = (commands: PathCommand[]): string => commands.map((com
         case 'Z': return 'Z';
     }
 }).join(' ');
+
+const clipPathAttr = (clipPathId: string | null | undefined): string =>
+    clipPathId ? ` clip-path="url(#${escapeXml(clipPathId)})"` : '';
 
 const cssColorOrDefault = (value: string | undefined, fallback: string): string => {
     const normalized = String(value || '').trim();
@@ -147,6 +152,7 @@ export class CanvasContext implements Context {
     private readonly svgCache = new Map<number, string>();
     private readonly pageImageCache = new Map<number, Promise<CanvasImageSource>>();
     private readonly stateStack: GraphicsState[] = [];
+    private clipPathCounter = 0;
     private currentState: GraphicsState = {
         fontId: null,
         fontSize: 12,
@@ -155,6 +161,7 @@ export class CanvasContext implements Context {
         lineWidth: 1,
         opacity: 1,
         dash: null,
+        clipPathId: null,
         matrix: identityMatrix()
     };
     private currentPath: PathCommand[] = [];
@@ -176,7 +183,7 @@ export class CanvasContext implements Context {
     }
 
     addPage(): void {
-        this.pages.push({ nodes: [], usedFontIds: new Set<string>() });
+        this.pages.push({ nodes: [], defs: [], usedFontIds: new Set<string>() });
         this.currentPageIndex = this.pages.length - 1;
         this.currentPath = [];
         this.markPageDirty(this.currentPageIndex);
@@ -310,6 +317,17 @@ export class CanvasContext implements Context {
         return this;
     }
 
+    circle(x: number, y: number, r: number): this {
+        const k = 0.5522848 * r;
+        this.currentPath.push({ type: 'M', x: x + r, y });
+        this.currentPath.push({ type: 'C', cp1x: x + r, cp1y: y + k, cp2x: x + k, cp2y: y + r, x, y: y + r });
+        this.currentPath.push({ type: 'C', cp1x: x - k, cp1y: y + r, cp2x: x - r, cp2y: y + k, x: x - r, y });
+        this.currentPath.push({ type: 'C', cp1x: x - r, cp1y: y - k, cp2x: x - k, cp2y: y - r, x, y: y - r });
+        this.currentPath.push({ type: 'C', cp1x: x + k, cp1y: y - r, cp2x: x + r, cp2y: y - k, x: x + r, y });
+        this.currentPath.push({ type: 'Z' });
+        return this;
+    }
+
     rect(x: number, y: number, w: number, h: number): this {
         this.currentPath.push({ type: 'M', x, y });
         this.currentPath.push({ type: 'L', x: x + w, y });
@@ -331,6 +349,19 @@ export class CanvasContext implements Context {
         this.currentPath.push({ type: 'L', x, y: y + r });
         this.currentPath.push({ type: 'C', cp1x: x, cp1y: y + r - k, cp2x: x + r - k, cp2y: y, x: x + r, y });
         this.currentPath.push({ type: 'Z' });
+        return this;
+    }
+
+    clip(_rule?: 'nonzero' | 'evenodd'): this {
+        if (this.currentPath.length === 0) return this;
+        const page = this.requireCurrentPage();
+        this.markPageDirty(this.currentPageIndex);
+        const clipPathId = `clip-${this.currentPageIndex}-${++this.clipPathCounter}`;
+        page.defs.push(
+            `<clipPath id="${escapeXml(clipPathId)}"><path d="${pathCommandsToSvg(this.currentPath)}" transform="${matrixToSvg(this.currentState.matrix)}" /></clipPath>`
+        );
+        this.currentState.clipPathId = clipPathId;
+        this.currentPath = [];
         return this;
     }
 
@@ -373,6 +404,7 @@ export class CanvasContext implements Context {
         const baselineY = contextBaselineY(y, Number(options?.ascent || 0), this.currentState.fontSize);
         const transformAttr = ` transform="${matrixToSvg(this.currentState.matrix)}"`;
         const opacityAttr = this.currentState.opacity !== 1 ? ` opacity="${this.currentState.opacity}"` : '';
+        const clipAttr = clipPathAttr(this.currentState.clipPathId);
         const letterSpacingAttr = options?.characterSpacing ? ` letter-spacing="${options.characterSpacing}"` : '';
         const style = [
             `fill:${cssColorOrDefault(this.currentState.fillColor, '#000000')}`,
@@ -381,7 +413,7 @@ export class CanvasContext implements Context {
             'white-space:pre'
         ].join(';');
         page.nodes.push(
-            `<text x="${x}" y="${baselineY}"${transformAttr}${opacityAttr}${letterSpacingAttr} style="${style}" xml:space="preserve">${escapeXml(str)}</text>`
+            `<text x="${x}" y="${baselineY}"${transformAttr}${opacityAttr}${clipAttr}${letterSpacingAttr} style="${style}" xml:space="preserve">${escapeXml(str)}</text>`
         );
         return this;
     }
@@ -422,8 +454,9 @@ export class CanvasContext implements Context {
                     baselineY - Number(position?.yOffset || 0) * scale
                 ]
             );
+            const clipAttr = clipPathAttr(this.currentState.clipPathId);
             page.nodes.push(
-                `<path d="${pathData}" transform="${matrixToSvg(glyphMatrix)}" fill="${escapeXml(color)}"${opacityAttr} />`
+                `<path d="${pathData}" transform="${matrixToSvg(glyphMatrix)}" fill="${escapeXml(color)}"${opacityAttr}${clipAttr} />`
             );
             penX += Number(position?.xAdvance || 0) * scale;
             if (extraTracking && index < run.glyphs.length - 1) {
@@ -479,8 +512,9 @@ export class CanvasContext implements Context {
                 ]
             );
             const opacityAttr = this.currentState.opacity !== 1 ? ` opacity="${this.currentState.opacity}"` : '';
+            const clipAttr = clipPathAttr(this.currentState.clipPathId);
             page.nodes.push(
-                `<path d="${pathData}" transform="${matrixToSvg(glyphMatrix)}" fill="${escapeXml(color)}"${opacityAttr} />`
+                `<path d="${pathData}" transform="${matrixToSvg(glyphMatrix)}" fill="${escapeXml(color)}"${opacityAttr}${clipAttr} />`
             );
             penX += shapedGlyph.xAdvance || 0;
         }
@@ -496,8 +530,9 @@ export class CanvasContext implements Context {
         const height = Number(options?.height || 0);
         const transformAttr = ` transform="${matrixToSvg(this.currentState.matrix)}"`;
         const opacityAttr = this.currentState.opacity !== 1 ? ` opacity="${this.currentState.opacity}"` : '';
+        const clipAttr = clipPathAttr(this.currentState.clipPathId);
         page.nodes.push(
-            `<image x="${x}" y="${y}" width="${width}" height="${height}" href="${escapeXml(href)}"${transformAttr}${opacityAttr} />`
+            `<image x="${x}" y="${y}" width="${width}" height="${height}" href="${escapeXml(href)}"${transformAttr}${opacityAttr}${clipAttr} />`
         );
         return this;
     }
@@ -532,6 +567,7 @@ export class CanvasContext implements Context {
             `<svg xmlns="http://www.w3.org/2000/svg" width="${this.pageWidth}" height="${this.pageHeight}" viewBox="0 0 ${this.pageWidth} ${this.pageHeight}">`,
             '<defs>',
             fontFaces ? `<style>${fontFaces}</style>` : '',
+            ...page.defs,
             '</defs>',
             ...page.nodes,
             '</svg>'
@@ -644,8 +680,9 @@ export class CanvasContext implements Context {
             : '';
         const opacityAttr = this.currentState.opacity !== 1 ? ` opacity="${this.currentState.opacity}"` : '';
         const fillRuleAttr = options.fillRule ? ` fill-rule="${options.fillRule}"` : '';
+        const clipAttr = clipPathAttr(this.currentState.clipPathId);
         page.nodes.push(
-            `<path d="${pathCommandsToSvg(this.currentPath)}" transform="${matrixToSvg(this.currentState.matrix)}" fill="${escapeXml(options.fill)}" stroke="${escapeXml(options.stroke)}" stroke-width="${this.currentState.lineWidth}"${dashAttr}${opacityAttr}${fillRuleAttr} />`
+            `<path d="${pathCommandsToSvg(this.currentPath)}" transform="${matrixToSvg(this.currentState.matrix)}" fill="${escapeXml(options.fill)}" stroke="${escapeXml(options.stroke)}" stroke-width="${this.currentState.lineWidth}"${dashAttr}${opacityAttr}${fillRuleAttr}${clipAttr} />`
         );
         this.currentPath = [];
     }

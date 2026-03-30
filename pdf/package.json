@@ -1,6 +1,6 @@
 {
   "name": "@vmprint/context-pdf",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "PDF rendering context for VMPrint, powered by pdfkit.",
   "author": "cosmiciron",
   "license": "Apache-2.0",
@@ -27,7 +27,7 @@
     "clean": "rimraf dist"
   },
   "dependencies": {
-    "@vmprint/contracts": "^1.0.0",
+    "@vmprint/contracts": "^1.0.2",
     "buffer": "^6.0.3",
     "pdfkit": "^0.17.2"
   },
