@@ -10,7 +10,8 @@
   "workspaces": [
     "canvas",
     "pdf",
-    "pdf-lite"
+    "pdf-lite",
+    "dev-cli"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
